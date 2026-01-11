@@ -43,7 +43,9 @@ import {
   CreditCard,
   Smartphone,
   ArrowLeft,
-  Clock
+  Clock,
+  Megaphone,
+  ArrowRight
 } from 'lucide-react';
 
 // --- Configuration & Types ---
@@ -523,6 +525,67 @@ const Header = ({ activeTab, setActiveTab, license, onOpenPro }: { activeTab: st
   );
 };
 
+const OfferBanner = ({ onBuy, licenseType }: { onBuy: () => void, licenseType: string }) => {
+  const [timeLeft, setTimeLeft] = useState(600); // 10 minutes
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 600));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  if (licenseType === 'LIFETIME' || licenseType === 'PRO') return null;
+
+  return (
+     <div className="bg-gradient-to-r from-brand-900 via-red-900 to-brand-900 border-b border-red-500/30 relative overflow-hidden">
+        {/* Background Pattern */}
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#ef4444 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
+        
+        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row items-center justify-between gap-3 relative z-10">
+            {/* Left Side: Message */}
+            <div className="flex items-center gap-4 w-full md:w-auto">
+                <div className="hidden md:flex bg-red-500/20 p-2.5 rounded-xl border border-red-500/50 items-center justify-center animate-bounce">
+                    <Megaphone className="text-red-400" size={20} />
+                </div>
+                <div className="text-center md:text-left flex-1">
+                    <div className="flex items-center justify-center md:justify-start gap-2 mb-0.5">
+                        <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse">Expirando</span>
+                        <h3 className="text-sm md:text-lg font-bold text-white italic">OFERTA DE BOAS-VINDAS</h3>
+                    </div>
+                    <p className="text-xs md:text-sm text-gray-300">
+                        Assine o <span className="text-brand-accent font-bold">PLANO VITALÍCIO</span> com <span className="text-yellow-400 font-bold border-b border-yellow-400 border-dashed">50% DE DESCONTO</span> hoje.
+                    </p>
+                </div>
+            </div>
+
+            {/* Right Side: Timer & Action */}
+            <div className="flex items-center gap-3 w-full md:w-auto bg-black/20 p-1.5 rounded-xl border border-white/5 backdrop-blur-sm">
+                <div className="flex flex-col px-3 border-r border-white/10 min-w-[80px]">
+                    <span className="text-[9px] text-gray-400 uppercase font-bold text-right">Tempo Restante</span>
+                    <div className="font-mono text-xl font-bold text-white flex justify-end items-center gap-1">
+                       <Clock size={14} className="text-red-400" />
+                       {formatTime(timeLeft)}
+                    </div>
+                </div>
+                <button 
+                    onClick={onBuy}
+                    className="flex-1 md:flex-none bg-gradient-to-r from-yellow-500 to-yellow-400 hover:from-yellow-400 hover:to-yellow-300 text-brand-900 font-bold text-xs md:text-sm px-4 py-2.5 rounded-lg shadow-lg shadow-yellow-500/20 transition-all transform hover:scale-[1.02] flex items-center justify-center gap-2 whitespace-nowrap"
+                >
+                    APROVEITAR AGORA <ArrowRight size={16} />
+                </button>
+            </div>
+        </div>
+     </div>
+  );
+};
+
 const Paywall = ({ onUnlock, onClose }: { onUnlock: (key: string) => boolean, onClose: () => void }) => {
   const [keyInput, setKeyInput] = useState('');
   const [error, setError] = useState('');
@@ -893,6 +956,7 @@ const App = () => {
   return (
     <div className="min-h-screen bg-brand-900 text-gray-100 pb-24 font-sans relative">
       <Header activeTab={activeTab} setActiveTab={handleTabChange} license={license} onOpenPro={() => setShowPaywall(true)} />
+      <OfferBanner onBuy={() => setShowPaywall(true)} licenseType={license.type} />
       {activeTab === 'scanner' && (
         <>
           <FilterBar selectedSports={selectedSports} toggleSport={toggleSport} toggleAllSports={toggleAllSports} selectedBookmakers={selectedBookmakers} toggleBookmaker={toggleBookmaker} toggleAllBookmakers={toggleAllBookmakers} selectedMarkets={selectedMarkets} toggleMarket={toggleMarket} toggleAllMarkets={toggleAllMarkets} onSearch={handleSearch} isSearching={isSearching} isPro={license.active} onOpenPro={() => setShowPaywall(true)} />
