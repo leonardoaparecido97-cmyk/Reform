@@ -200,6 +200,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
 }
 
 const scanRealOdds = async (sports: string[], selectedBookmakers: string[], selectedMarkets: string[], isPro: boolean): Promise<Opportunity[]> => {
+  const ai = getClient();
   const activeSports = isPro ? sports : ['Futebol'];
   const activeBookies = isPro ? selectedBookmakers : ['Bet365', 'Betano'];
   
@@ -208,23 +209,20 @@ const scanRealOdds = async (sports: string[], selectedBookmakers: string[], sele
   const marketList = selectedMarkets.join(', ');
   
   const prompt = `
-    STRICTLY SEARCH FOR REAL-TIME LIVE DATA. DO NOT INVENT DATA.
-    
     Search for currently available betting odds for upcoming matches in these sports: ${sportList}.
     
     TARGET BOOKMAKERS: ${bookmakerList}.
     TARGET MARKETS: ${marketList}.
     
-    TASK: Find the best odds differences between bookmakers using Google Search.
+    TASK: Find the best odds differences between bookmakers.
     
     OBJECTIVE:
     1. PRIORITY: Find Arbitrage Opportunities (Surebets) where (1/OddA + 1/OddB...) < 1.0.
     2. SECONDARY: If no Surebets are found, return matches with the closest odds (Lowest Margin/Highest Value).
     
     INSTRUCTIONS:
-    1. EXTRACT real odds from the search results. 
-    2. Look for 2-WAY markets (e.g., Over/Under, BTTS). Compare Bookie A vs Bookie B.
-    3. Look for 3-WAY markets (e.g., 1x2 Winner). Compare Bookie A vs Bookie B vs Bookie C.
+    1. Look for 2-WAY markets (e.g., Over/Under, BTTS). Compare Bookie A vs Bookie B.
+    2. Look for 3-WAY markets (e.g., 1x2 Winner). Compare Bookie A vs Bookie B vs Bookie C.
     
     Return a JSON array strictly in this format:
     [
@@ -258,16 +256,11 @@ const scanRealOdds = async (sports: string[], selectedBookmakers: string[], sele
     Find at least 5 distinct events with the best odds differences available right now.
   `;
 
-  // Internal function to execute the scan with configurable tools
-  const executeScan = async () => {
-    const ai = getClient();
-    // FORCE GOOGLE SEARCH GROUNDING for real data
-    const config = { tools: [{ googleSearch: {} }] };
-    
+  try {
     const response = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: config
+      config: { tools: [{ googleSearch: {} }] }
     }));
 
     const text = response.text || "";
@@ -275,14 +268,13 @@ const scanRealOdds = async (sports: string[], selectedBookmakers: string[], sele
     const sources = groundingChunks.map((chunk: any) => chunk.web).filter((web: any) => web && web.uri && web.title);
 
     let jsonString = text;
-    // Improved regex to handle various markdown JSON formats
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```([\s\S]*?)```/);
     if (jsonMatch) jsonString = jsonMatch[1];
 
     try {
       const parsedData = JSON.parse(jsonString);
       if (Array.isArray(parsedData)) {
-        return parsedData.map((item, index) => {
+        const results = parsedData.map((item, index) => {
           let prob = (1/item.oddA) + (1/item.oddB);
           if (item.type === '3-way' && item.oddC) prob += (1/item.oddC);
           const roi = ((1/prob) - 1) * 100;
@@ -309,21 +301,14 @@ const scanRealOdds = async (sports: string[], selectedBookmakers: string[], sele
             roi: Number(roi.toFixed(2)),
             sources: sources.slice(0, 3) 
           };
-        }).filter((item: Opportunity) => item.roi > -5.0);
+        });
+        // Filter valid results - Allow near-misses (ROI > -5%) to show activity
+        const validResults = results.filter((item: Opportunity) => item.roi > -5.0);
+        return validResults;
       }
       return [];
-    } catch (e) { 
-      console.warn("JSON Parse Error:", e);
-      return []; 
-    }
-  };
-
-  try {
-    return await executeScan();
-  } catch (error) { 
-    console.error("AI Scan Fatal Error:", error);
-    throw error; // Propagate error to UI
-  }
+    } catch (e) { return []; }
+  } catch (error) { return []; }
 };
 
 const analyzeOpportunity = async (opp: Opportunity): Promise<string> => {
@@ -719,4 +704,216 @@ const ArbitrageCard: React.FC<{ data: Opportunity, onSelect: (data: Opportunity)
     <div className={`bg-brand-800 rounded-xl p-5 border transition-all shadow-lg hover:shadow-brand-accent/5 group flex flex-col h-full ${data.roi > 10 ? 'border-red-500/30' : 'border-brand-700 hover:border-brand-accent/50'}`}>
       <div className="flex justify-between items-start mb-4">
         <div><div className="flex items-center gap-2 text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wider"><Trophy size={12} className="text-brand-accent" />{data.sport} • {data.league}</div><h3 className="text-lg font-bold text-white group-hover:text-brand-accent transition-colors line-clamp-2">{data.event}</h3><p className="text-sm text-gray-400">{data.market} • {data.startTime}</p></div>
-        <div className="text-right shrink-0 ml-2"><div className={`inline-flex flex-col items-end`}><div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full border ${status.bg} ${status.color} ${status.border}`}><span className="text-lg font-bold">{data.roi > 0 ? '+' : ''}{
+        <div className="text-right shrink-0 ml-2"><div className={`inline-flex flex-col items-end`}><div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full border ${status.bg} ${status.color} ${status.border}`}><span className="text-lg font-bold">{data.roi > 0 ? '+' : ''}{data.roi}%</span><span className="text-xs font-medium">ROI</span></div>{data.roi > 10 && (<span className="text-[10px] text-red-400 mt-1 font-bold flex items-center gap-1"><AlertTriangle size={10} /> SUSPEITO</span>)}</div></div>
+      </div>
+      <div className={`grid gap-3 mb-4 flex-grow ${is3Way ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        <div className="bg-brand-900/50 p-2 rounded-lg border border-brand-700/50 hover:border-brand-600 transition-colors flex flex-col justify-between"><div><div className="flex justify-between text-xs text-gray-400 mb-1"><span className="font-semibold text-blue-400 truncate w-full" title={data.bookmakerA}>{data.bookmakerA}</span></div><div className="flex flex-col mb-2"><span className="text-xs text-gray-300 truncate mb-1" title={data.outcomeA}>{data.outcomeA}</span><span className="text-xl font-bold text-white tracking-tight">{data.oddA.toFixed(2)}</span></div></div><a href={linkA} target="_blank" rel="noopener noreferrer" className="w-full mt-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 text-xs py-1.5 rounded flex items-center justify-center gap-1 transition-colors border border-blue-600/20"><ExternalLink size={10} /></a></div>
+        <div className="bg-brand-900/50 p-2 rounded-lg border border-brand-700/50 hover:border-brand-600 transition-colors flex flex-col justify-between"><div><div className="flex justify-between text-xs text-gray-400 mb-1"><span className="font-semibold text-purple-400 truncate w-full" title={data.bookmakerB}>{data.bookmakerB}</span></div><div className="flex flex-col mb-2"><span className="text-xs text-gray-300 truncate mb-1" title={data.outcomeB}>{data.outcomeB}</span><span className="text-xl font-bold text-white tracking-tight">{data.oddB.toFixed(2)}</span></div></div><a href={linkB} target="_blank" rel="noopener noreferrer" className="w-full mt-2 bg-purple-600/10 hover:bg-purple-600/20 text-purple-400 text-xs py-1.5 rounded flex items-center justify-center gap-1 transition-colors border border-purple-600/20"><ExternalLink size={10} /></a></div>
+        {is3Way && data.bookmakerC && data.oddC && (<div className="bg-brand-900/50 p-2 rounded-lg border border-brand-700/50 hover:border-brand-600 transition-colors flex flex-col justify-between"><div><div className="flex justify-between text-xs text-gray-400 mb-1"><span className="font-semibold text-emerald-400 truncate w-full" title={data.bookmakerC}>{data.bookmakerC}</span></div><div className="flex flex-col mb-2"><span className="text-xs text-gray-300 truncate mb-1" title={data.outcomeC}>{data.outcomeC}</span><span className="text-xl font-bold text-white tracking-tight">{data.oddC.toFixed(2)}</span></div></div><a href={linkC} target="_blank" rel="noopener noreferrer" className="w-full mt-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 text-xs py-1.5 rounded flex items-center justify-center gap-1 transition-colors border border-emerald-600/20"><ExternalLink size={10} /></a></div>)}
+      </div>
+      <div className="space-y-3 mt-auto"><button onClick={() => onSelect(data)} className={`w-full font-medium py-3 rounded-lg flex items-center justify-center gap-2 transition-colors border shadow-md ${data.roi > 10 ? 'bg-red-900/40 hover:bg-red-900/60 text-red-100 border-red-800' : 'bg-brand-700 hover:bg-brand-600 text-white border-brand-600'}`}><Calculator size={18} /> {data.roi > 10 ? 'Analisar Risco' : 'Calcular & Analisar'}</button></div>
+    </div>
+  );
+};
+
+const CalculatorModal = ({ data, onClose, onSaveBet, isPro, onOpenPro }: { data: Opportunity, onClose: () => void, onSaveBet: (bet: BetRecord) => void, isPro: boolean, onOpenPro: () => void }) => {
+  const [investment, setInvestment] = useState<number>(1000);
+  const [stakeA, setStakeA] = useState<number>(0);
+  const [stakeB, setStakeB] = useState<number>(0);
+  const [stakeC, setStakeC] = useState<number>(0);
+  const [profit, setProfit] = useState<number>(0);
+  const [isSaved, setIsSaved] = useState(false);
+  const [aiAnalysis, setAiAnalysis] = useState<string>("");
+  const [isLoadingAi, setIsLoadingAi] = useState<boolean>(false);
+  const linkA = getBookmakerLink(data.bookmakerA, data.event, data.linkA);
+  const linkB = getBookmakerLink(data.bookmakerB, data.event, data.linkB);
+  const linkC = data.bookmakerC ? getBookmakerLink(data.bookmakerC, data.event, data.linkC) : undefined;
+  const is3Way = data.type === '3-way' && data.oddC;
+
+  useEffect(() => {
+    const probA = 1 / data.oddA;
+    const probB = 1 / data.oddB;
+    let probC = 0;
+    if (is3Way && data.oddC) probC = 1 / data.oddC;
+    const totalProb = probA + probB + probC;
+    const calculatedStakeA = (investment * probA) / totalProb;
+    const calculatedStakeB = (investment * probB) / totalProb;
+    const calculatedStakeC = is3Way ? (investment * probC) / totalProb : 0;
+    const returnA = calculatedStakeA * data.oddA;
+    const totalProfit = returnA - investment;
+    setStakeA(calculatedStakeA);
+    setStakeB(calculatedStakeB);
+    setStakeC(calculatedStakeC);
+    setProfit(totalProfit);
+  }, [investment, data, is3Way]);
+
+  const handleAiAnalysis = async () => {
+    setIsLoadingAi(true);
+    setAiAnalysis("");
+    const result = await analyzeOpportunity(data);
+    setAiAnalysis(result);
+    setIsLoadingAi(false);
+  };
+
+  const handleSaveToBankroll = () => {
+    if (!isPro) { onOpenPro(); return; }
+    const bet: BetRecord = { id: Date.now().toString(), date: new Date().toLocaleDateString('pt-BR'), event: data.event, market: data.market, investment: investment, expectedProfit: profit, status: 'pending', roi: data.roi, bookmakers: [data.bookmakerA, data.bookmakerB, data.bookmakerC].filter(Boolean) as string[] };
+    onSaveBet(bet);
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 2000);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-brand-800 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto border border-brand-700 shadow-2xl animate-in fade-in zoom-in duration-200 pb-24">
+        <div className="sticky top-0 bg-brand-800 border-b border-brand-700 p-6 flex justify-between items-center z-10"><div><h2 className="text-2xl font-bold text-white flex items-center gap-2"><Calculator className="text-brand-accent" /> Calculadora Surebet</h2><p className="text-brand-400 text-sm">{data.event} - {data.market}</p></div><button onClick={onClose} className="text-gray-400 hover:text-white transition-colors"><X size={24} /></button></div>
+        <div className="p-6 space-y-8">
+          {data.roi > 10 && (<div className="bg-red-900/30 border border-red-500/50 p-4 rounded-xl flex items-start gap-3"><ShieldAlert className="text-red-500 shrink-0 mt-1" size={24} /><div><h3 className="font-bold text-red-400 text-lg">Atenção: ROI de {data.roi}% é Altíssimo!</h3><p className="text-red-200/80 text-sm mt-1">Pode ser um erro da casa (Bad Line) ou dados desatualizados. Verifique antes de apostar.</p></div></div>)}
+          <div className="bg-brand-900/50 p-6 rounded-xl border border-brand-700/50"><label className="block text-sm font-medium text-gray-400 mb-2">Investimento Total (R$)</label><div className="relative"><div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><span className="text-brand-accent font-bold">R$</span></div><input type="number" value={investment} onChange={(e) => setInvestment(Number(e.target.value))} className="w-full bg-brand-800 border border-brand-600 rounded-lg py-4 pl-12 pr-4 text-white text-2xl font-bold focus:ring-2 focus:ring-brand-accent focus:border-transparent outline-none transition-all" /></div></div>
+          <div className={`grid gap-6 ${is3Way ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+            <div className="space-y-3"><div className="flex justify-between items-center"><span className="font-semibold text-white truncate max-w-[120px]" title={data.bookmakerA}>{data.bookmakerA}</span><span className="bg-brand-700 text-xs px-2 py-1 rounded text-gray-300">Odd: {data.oddA}</span></div><div className="bg-brand-800 border border-brand-600 p-4 rounded-lg relative overflow-hidden group"><div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div><div className="text-xs text-gray-400 uppercase mb-1 truncate" title={data.outcomeA}>Apostar em {data.outcomeA}</div><div className="text-xl font-bold text-brand-accent">R$ {stakeA.toFixed(2)}</div></div></div>
+            <div className="space-y-3"><div className="flex justify-between items-center"><span className="font-semibold text-white truncate max-w-[120px]" title={data.bookmakerB}>{data.bookmakerB}</span><span className="bg-brand-700 text-xs px-2 py-1 rounded text-gray-300">Odd: {data.oddB}</span></div><div className="bg-brand-800 border border-brand-600 p-4 rounded-lg relative overflow-hidden group"><div className="absolute top-0 left-0 w-1 h-full bg-purple-500"></div><div className="text-xs text-gray-400 uppercase mb-1 truncate" title={data.outcomeB}>Apostar em {data.outcomeB}</div><div className="text-xl font-bold text-brand-accent">R$ {stakeB.toFixed(2)}</div></div></div>
+            {is3Way && data.bookmakerC && data.oddC && (<div className="space-y-3"><div className="flex justify-between items-center"><span className="font-semibold text-white truncate max-w-[120px]" title={data.bookmakerC}>{data.bookmakerC}</span><span className="bg-brand-700 text-xs px-2 py-1 rounded text-gray-300">Odd: {data.oddC}</span></div><div className="bg-brand-800 border border-brand-600 p-4 rounded-lg relative overflow-hidden group"><div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div><div className="text-xs text-gray-400 uppercase mb-1 truncate" title={data.outcomeC}>Apostar em {data.outcomeC}</div><div className="text-xl font-bold text-brand-accent">R$ {stakeC.toFixed(2)}</div></div></div>)}
+          </div>
+          <div className={`border rounded-xl p-6 flex flex-col md:flex-row items-center justify-between gap-4 ${profit >= 0 ? 'bg-green-900/20 border-green-900/50' : 'bg-red-900/20 border-red-900/50'}`}><div className="flex items-center gap-4"><div className={`p-3 rounded-full ${profit >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}><DollarSign size={32} /></div><div><p className={`text-sm font-medium uppercase tracking-wide ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{profit >= 0 ? 'Lucro Estimado' : 'Perda Estimada'}</p><p className="text-3xl font-bold text-white">R$ {Math.abs(profit).toFixed(2)}</p></div></div><div className="flex items-center gap-2"><button onClick={handleSaveToBankroll} className={`px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all ${!isPro ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : isSaved ? 'bg-green-500 text-white' : 'bg-brand-accent text-brand-900 hover:bg-emerald-400'}`}>{!isPro ? <Lock size={16} className="text-yellow-500" /> : isSaved ? <CheckSquare size={16} /> : <Save size={16} />}{isSaved ? 'Salvo na Banca!' : 'Salvar na Banca'}</button></div></div>
+          <hr className="border-brand-700" />
+          <div><h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><CheckSquare className="text-brand-accent" /> Links Diretos</h3><div className="flex gap-2"><a href={linkA} target="_blank" rel="noopener noreferrer" className="flex-1 py-2 bg-blue-600/20 text-blue-400 border border-blue-600/50 rounded text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-600/30">{data.bookmakerA} <ExternalLink size={12}/></a><a href={linkB} target="_blank" rel="noopener noreferrer" className="flex-1 py-2 bg-purple-600/20 text-purple-400 border border-purple-600/50 rounded text-sm font-bold flex items-center justify-center gap-2 hover:bg-purple-600/30">{data.bookmakerB} <ExternalLink size={12}/></a>{is3Way && <a href={linkC} target="_blank" rel="noopener noreferrer" className="flex-1 py-2 bg-emerald-600/20 text-emerald-400 border border-emerald-600/50 rounded text-sm font-bold flex items-center justify-center gap-2 hover:bg-emerald-600/30">{data.bookmakerC} <ExternalLink size={12}/></a>}</div></div>
+          <hr className="border-brand-700" />
+          <div><div className="flex items-center justify-between mb-4"><h3 className="text-lg font-bold text-white flex items-center gap-2"><BrainCircuit className="text-purple-400" /> Análise de Risco (IA)</h3>{!aiAnalysis && !isLoadingAi && (<button onClick={handleAiAnalysis} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"><RefreshCw size={14} /> Consultar Gemini</button>)}</div>{isLoadingAi && (<div className="bg-brand-900/30 border border-brand-700 rounded-xl p-8 flex flex-col items-center justify-center text-center animate-pulse"><RefreshCw className="text-purple-500 animate-spin mb-3" size={32} /><p className="text-gray-300">Gemini está verificando a validade desta aposta na web...</p></div>)}{aiAnalysis && (<div className="bg-brand-900/50 border border-purple-500/30 rounded-xl p-6 relative overflow-hidden"><div className="absolute top-0 left-0 w-1 h-full bg-purple-500"></div><div className="prose prose-invert prose-sm max-w-none"><div className="text-gray-200 whitespace-pre-wrap leading-relaxed">{aiAnalysis}</div></div></div>)}</div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const BankrollDashboard = ({ bets, onDeleteBet }: { bets: BetRecord[], onDeleteBet: (id: string) => void }) => {
+  const totalInvested = bets.reduce((acc, b) => acc + b.investment, 0);
+  const profit = bets.filter(b => b.status !== 'pending').reduce((acc, b) => b.status === 'won' ? acc + b.expectedProfit : b.status === 'lost' ? acc - b.investment : acc, 0);
+  const closedBets = bets.filter(b => b.status !== 'pending');
+  const roi = closedBets.length > 0 ? (profit / closedBets.reduce((acc, b) => acc + b.investment, 0)) * 100 : 0;
+  const winRate = closedBets.length > 0 ? (closedBets.filter(b => b.status === 'won').length / closedBets.length) * 100 : 0;
+
+  return (
+    <div className="max-w-7xl mx-auto p-4 space-y-6 pb-24">
+      <div className="grid md:grid-cols-4 gap-4">
+        <div className="bg-brand-800 p-6 rounded-xl border border-brand-700"><p className="text-gray-400 text-sm font-medium">Lucro Total</p><h3 className={`text-2xl font-bold mt-1 ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>R$ {profit.toFixed(2)}</h3></div>
+        <div className="bg-brand-800 p-6 rounded-xl border border-brand-700"><p className="text-gray-400 text-sm font-medium">ROI Global</p><h3 className={`text-2xl font-bold mt-1 ${roi >= 0 ? 'text-blue-400' : 'text-red-400'}`}>{roi.toFixed(2)}%</h3></div>
+        <div className="bg-brand-800 p-6 rounded-xl border border-brand-700"><p className="text-gray-400 text-sm font-medium">Taxa de Acerto</p><h3 className="text-2xl font-bold mt-1 text-purple-400">{winRate.toFixed(1)}%</h3></div>
+        <div className="bg-brand-800 p-6 rounded-xl border border-brand-700"><p className="text-gray-400 text-sm font-medium">Total Investido</p><h3 className="text-2xl font-bold mt-1 text-white">R$ {totalInvested.toFixed(2)}</h3></div>
+      </div>
+      <div className="bg-brand-800 rounded-xl border border-brand-700 overflow-hidden">
+        <div className="p-4 bg-brand-900/50 border-b border-brand-700 flex justify-between items-center"><h3 className="font-bold flex items-center gap-2"><History size={18}/> Histórico de Entradas</h3><span className="text-xs text-gray-400">{bets.length} registros</span></div>
+        {bets.length === 0 ? (<div className="p-12 text-center text-gray-500"><Save size={48} className="mx-auto mb-4 opacity-20"/><p>Nenhuma aposta salva. Use a calculadora para adicionar.</p></div>) : (<div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead className="bg-brand-900/50 text-gray-400 font-medium"><tr><th className="p-4">Data</th><th className="p-4">Evento</th><th className="p-4">Casas</th><th className="p-4">Investimento</th><th className="p-4">Retorno Est.</th><th className="p-4">Status</th><th className="p-4 text-right">Ação</th></tr></thead><tbody className="divide-y divide-brand-700">{bets.map(bet => (<tr key={bet.id} className="hover:bg-brand-700/30"><td className="p-4 text-gray-400">{bet.date}</td><td className="p-4 font-medium text-white">{bet.event}<div className="text-xs text-gray-500">{bet.market}</div></td><td className="p-4 text-xs text-gray-400">{bet.bookmakers.join(' + ')}</td><td className="p-4">R$ {bet.investment.toFixed(2)}</td><td className="p-4 text-green-400">R$ {bet.expectedProfit.toFixed(2)}</td><td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold uppercase ${bet.status === 'won' ? 'bg-green-500/20 text-green-400' : bet.status === 'lost' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{bet.status === 'pending' ? 'Pendente' : bet.status === 'won' ? 'Green' : 'Red'}</span></td><td className="p-4 text-right"><button onClick={() => onDeleteBet(bet.id)} className="text-red-400 hover:text-red-300"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>)}
+      </div>
+    </div>
+  );
+};
+
+const TrustScanner = () => {
+  const [selectedBookie, setSelectedBookie] = useState(BOOKMAKERS[0]);
+  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const handleCheck = async () => {
+    setLoading(true);
+    const result = await checkBookmakerTrust(selectedBookie);
+    setAnalysis(result);
+    setLoading(false);
+  };
+  return (
+    <div className="max-w-3xl mx-auto p-4 py-8 pb-24">
+      <div className="bg-brand-800 rounded-xl border border-brand-700 p-8 shadow-xl">
+        <div className="text-center mb-8"><ShieldCheck className="w-16 h-16 text-brand-accent mx-auto mb-4" /><h2 className="text-2xl font-bold text-white">Verificador de Credibilidade</h2><p className="text-gray-400 mt-2">A IA analisará reclamações recentes, licenças e reputação.</p></div>
+        <div className="flex gap-4 mb-6"><select value={selectedBookie} onChange={(e) => setSelectedBookie(e.target.value)} className="flex-1 bg-brand-900 border border-brand-700 text-white rounded-lg p-3 outline-none focus:border-brand-accent">{BOOKMAKERS.map(b => <option key={b} value={b}>{b}</option>)}</select><button onClick={handleCheck} disabled={loading} className="bg-brand-accent text-brand-900 font-bold px-6 rounded-lg hover:bg-emerald-400 transition-colors disabled:opacity-50">{loading ? 'Analisando...' : 'Verificar'}</button></div>
+        {analysis && (<div className="bg-brand-900/50 p-6 rounded-lg border border-brand-700 animate-in fade-in slide-in-from-bottom-4"><div className="prose prose-invert"><div className="whitespace-pre-wrap text-gray-200">{analysis}</div></div><div className="mt-4 pt-4 border-t border-brand-700 text-xs text-gray-500 text-center">Dados baseados em resultados de pesquisa pública.</div></div>)}
+      </div>
+    </div>
+  );
+};
+
+const App = () => {
+  const [showLanding, setShowLanding] = useState(true);
+  const [activeTab, setActiveTab] = useState('scanner'); 
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [sortBy, setSortBy] = useState<'roi-desc' | 'roi-asc' | 'time'>('roi-desc');
+  const [showPaywall, setShowPaywall] = useState(false);
+  
+  const [license, setLicense] = useState<License>(() => {
+    const saved = localStorage.getItem('arbibot_license');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.expiresAt && Date.now() > parsed.expiresAt) return { active: false, type: 'FREE', expiresAt: null, key: '' };
+      return parsed;
+    }
+    return { active: false, type: 'FREE', expiresAt: null, key: '' };
+  });
+
+  useEffect(() => { localStorage.setItem('arbibot_license', JSON.stringify(license)); }, [license]);
+
+  const handleUnlock = (key: string) => {
+    const trimmedKey = key.trim();
+    if (trimmedKey.startsWith("VlP-TESTE-")) { setLicense({ active: true, type: 'TRIAL', expiresAt: Date.now() + (2 * 24 * 60 * 60 * 1000), key: trimmedKey }); return true; }
+    if (trimmedKey.startsWith("VlP-PRO-")) { setLicense({ active: true, type: 'PRO', expiresAt: Date.now() + (30 * 24 * 60 * 60 * 1000), key: trimmedKey }); return true; }
+    if (trimmedKey.startsWith("VlP-VITAL-")) { setLicense({ active: true, type: 'LIFETIME', expiresAt: 9999999999999, key: trimmedKey }); return true; }
+    return false;
+  };
+
+  const [bets, setBets] = useState<BetRecord[]>(() => { const saved = localStorage.getItem('arbibot_bets'); return saved ? JSON.parse(saved) : []; });
+  useEffect(() => { localStorage.setItem('arbibot_bets', JSON.stringify(bets)); }, [bets]);
+  const addBet = (bet: BetRecord) => { setBets(prev => [bet, ...prev]); };
+  const deleteBet = (id: string) => { setBets(prev => prev.filter(b => b.id !== id)); };
+
+  const [selectedSports, setSelectedSports] = useState<string[]>(['Futebol']);
+  const [selectedBookmakers, setSelectedBookmakers] = useState<string[]>(['Bet365', 'Betano', 'Pinnacle', 'Sportingbet']);
+  const [selectedMarkets, setSelectedMarkets] = useState<string[]>(['Vencedor (Moneyline/1x2)']); 
+
+  const toggleSport = (sport: string) => setSelectedSports(prev => prev.includes(sport) ? prev.filter(s => s !== sport) : [...prev, sport]);
+  const toggleAllSports = () => setSelectedSports(selectedSports.length === SPORTS.length ? [] : [...SPORTS]);
+  const toggleBookmaker = (bookie: string) => setSelectedBookmakers(prev => prev.includes(bookie) ? prev.filter(b => b !== bookie) : [...prev, bookie]);
+  const toggleAllBookmakers = () => setSelectedBookmakers(selectedBookmakers.length === BOOKMAKERS.length ? [] : [...BOOKMAKERS]);
+  const toggleMarket = (market: string) => setSelectedMarkets(prev => prev.includes(market) ? prev.filter(m => m !== market) : [...prev, market]);
+  const toggleAllMarkets = () => setSelectedMarkets(selectedMarkets.length === MARKET_TYPES.length ? [] : [...MARKET_TYPES]);
+
+  const handleSearch = async () => {
+    if (selectedSports.length === 0) return alert("Selecione pelo menos 1 esporte.");
+    if (selectedBookmakers.length < 2) return alert("Selecione pelo menos 2 casas.");
+    setIsSearching(true); setHasSearched(true); setOpportunities([]); 
+    const results = await scanRealOdds(selectedSports, selectedBookmakers, selectedMarkets, license.active);
+    setOpportunities(results); setIsSearching(false);
+  };
+
+  const handleTabChange = (tab: string) => { if (!license.active && (tab === 'bankroll' || tab === 'trust')) setShowPaywall(true); else setActiveTab(tab); };
+  useEffect(() => { if (!showLanding && activeTab === 'scanner' && !hasSearched) handleSearch(); }, [activeTab, showLanding]);
+  const sortedOpportunities = [...opportunities].sort((a, b) => { if (sortBy === 'roi-desc') return b.roi - a.roi; if (sortBy === 'roi-asc') return a.roi - b.roi; if (sortBy === 'time') return (a.startTime || '').localeCompare(b.startTime || ''); return 0; });
+
+  if (showLanding) return <LandingPage onEnter={() => setShowLanding(false)} />;
+
+  return (
+    <div className="min-h-screen bg-brand-900 text-gray-100 pb-24 font-sans relative">
+      <Header activeTab={activeTab} setActiveTab={handleTabChange} license={license} onOpenPro={() => setShowPaywall(true)} />
+      {activeTab === 'scanner' && (
+        <>
+          <FilterBar selectedSports={selectedSports} toggleSport={toggleSport} toggleAllSports={toggleAllSports} selectedBookmakers={selectedBookmakers} toggleBookmaker={toggleBookmaker} toggleAllBookmakers={toggleAllBookmakers} selectedMarkets={selectedMarkets} toggleMarket={toggleMarket} toggleAllMarkets={toggleAllMarkets} onSearch={handleSearch} isSearching={isSearching} isPro={license.active} onOpenPro={() => setShowPaywall(true)} />
+          <main className="max-w-7xl mx-auto px-4 pt-8">
+            {hasSearched && !isSearching && (<div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4"><h2 className="text-xl font-bold text-white flex items-center gap-2"><span className="w-2 h-6 bg-brand-accent rounded-full"></span>{opportunities.length > 0 ? `${opportunities.length} Oportunidades` : 'Nenhuma oportunidade'}</h2>{opportunities.length > 0 && (<div className="flex items-center gap-2"><ArrowUpDown size={16} className="text-gray-400" /><select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="bg-brand-800 text-sm text-white border border-brand-700 rounded-lg px-3 py-2 outline-none focus:border-brand-accent"><option value="roi-desc">Maior Lucro (Melhor Odd)</option><option value="roi-asc">Menor Lucro</option><option value="time">Horário do Jogo</option></select></div>)}</div>)}
+            {isSearching && <ScanConsole isSearching={isSearching} selectedSports={selectedSports} selectedBookmakers={selectedBookmakers} />}
+            {!isSearching && (<div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{sortedOpportunities.map((opp) => (<ArbitrageCard key={opp.id} data={opp} onSelect={setSelectedOpportunity} />))}</div>)}
+            {!isSearching && hasSearched && opportunities.length === 0 && (<div className="bg-brand-800/50 border border-brand-700/50 rounded-xl p-12 text-center max-w-2xl mx-auto mt-8"><Search className="mx-auto text-gray-600 mb-4" size={48} /><h3 className="text-lg font-bold text-white mb-2">Nada encontrado</h3><p className="text-gray-400 text-sm">Tente selecionar mercados diferentes ou assine o PRO para ver mais casas.</p><div className="flex justify-center gap-4 mt-4"><button onClick={handleSearch} className="text-brand-accent hover:underline">Tentar novamente</button>{!license.active && (<button onClick={() => setShowPaywall(true)} className="text-yellow-500 font-bold hover:underline flex items-center gap-1"><Lock size={12}/> Liberar + Casas</button>)}</div></div>)}
+          </main>
+        </>
+      )}
+      {activeTab === 'bankroll' && <BankrollDashboard bets={bets} onDeleteBet={deleteBet} />}
+      {activeTab === 'trust' && <TrustScanner />}
+      {selectedOpportunity && <CalculatorModal data={selectedOpportunity} onClose={() => setSelectedOpportunity(null)} onSaveBet={addBet} isPro={license.active} onOpenPro={() => setShowPaywall(true)} />}
+      {showPaywall && <Paywall onUnlock={handleUnlock} onClose={() => setShowPaywall(false)} />}
+      <StickyFooter />
+    </div>
+  );
+};
+
+const rootElement = document.getElementById('root');
+if (!rootElement) throw new Error("Could not find root element");
+const root = createRoot(rootElement);
+root.render(<App />);
