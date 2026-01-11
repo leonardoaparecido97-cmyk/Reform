@@ -123,35 +123,39 @@ const PLANS = [
     id: 'trial',
     name: 'Teste VIP 48h',
     duration: '2 Dias',
-    price: '5,00',
+    price: '2,50',
+    originalPrice: '5,00',
     highlight: true,
     features: ['Teste TODAS as Casas', 'Acesso Imediato', 'Calculadora PRO', 'Sem Compromisso'],
-    link: `https://wa.me/${WHATSAPP_NUMBER}?text=Ol%C3%A1!%20Quero%20testar%20o%20ArbiBot%20PRO%20por%2048h%20pagando%20R$%205,00.`
+    link: `https://wa.me/${WHATSAPP_NUMBER}?text=Ol%C3%A1!%20Quero%20aproveitar%20a%20oferta%20de%2050%25%20e%20testar%20o%20ArbiBot%20PRO%20por%2048h%20pagando%20R$%202,50.`
   },
   {
     id: 'monthly',
     name: 'Plano Mensal',
     duration: '30 Dias',
-    price: '97,00',
+    price: '48,50',
+    originalPrice: '97,00',
     features: ['Acesso a TODAS as Casas', 'Calculadora PRO', 'Scanner de Confiança', 'Gestão de Banca', 'Suporte Prioritário'],
-    link: `https://wa.me/${WHATSAPP_NUMBER}?text=Ol%C3%A1!%20Gostaria%20de%20adquirir%20o%20plano%20MENSAL%20do%20ArbiBot%20PRO%20por%20R$%2097,00.`
+    link: `https://wa.me/${WHATSAPP_NUMBER}?text=Ol%C3%A1!%20Quero%20aproveitar%20a%20oferta%20de%2050%25%20no%20plano%20MENSAL%20do%20ArbiBot%20PRO%20por%20R$%2048,50.`
   },
   {
     id: 'semiannual',
     name: 'Plano Semestral',
     duration: '6 Meses',
-    price: '297,00',
+    price: '148,50',
+    originalPrice: '297,00',
     popular: true,
-    features: ['Economize 50%', 'Acesso a TODAS as Casas', 'Calculadora PRO', 'Scanner de Confiança', 'Gestão de Banca', 'Suporte Prioritário'],
-    link: `https://wa.me/${WHATSAPP_NUMBER}?text=Ol%C3%A1!%20Gostaria%20de%20adquirir%20o%20plano%20SEMESTRAL%20do%20ArbiBot%20PRO%20por%20R$%20297,00%20(Com%20Desconto%20PIX).`
+    features: ['Economize +50%', 'Acesso a TODAS as Casas', 'Calculadora PRO', 'Scanner de Confiança', 'Gestão de Banca', 'Suporte Prioritário'],
+    link: `https://wa.me/${WHATSAPP_NUMBER}?text=Ol%C3%A1!%20Quero%20aproveitar%20a%20oferta%20de%2050%25%20no%20plano%20SEMESTRAL%20do%20ArbiBot%20PRO%20por%20R$%20148,50.`
   },
   {
     id: 'lifetime',
     name: 'Acesso Vitalício',
     duration: 'Para Sempre',
-    price: '497,00',
+    price: '248,50',
+    originalPrice: '497,00',
     features: ['Pagamento Único', 'Atualizações Gratuitas', 'Acesso a TODAS as Casas', 'Scanner de Confiança', 'Gestão de Banca', 'Grupo VIP Secreto'],
-    link: `https://wa.me/${WHATSAPP_NUMBER}?text=Ol%C3%A1!%20Gostaria%20de%20adquirir%20o%20acesso%20VITAL%C3%8DCIO%20do%20ArbiBot%20PRO%20por%20R$%20497,00.`
+    link: `https://wa.me/${WHATSAPP_NUMBER}?text=Ol%C3%A1!%20Quero%20aproveitar%20a%20oferta%20de%2050%25%20no%20acesso%20VITAL%C3%8DCIO%20do%20ArbiBot%20PRO%20por%20R$%20248,50.`
   }
 ];
 
@@ -589,6 +593,20 @@ const OfferBanner = ({ onBuy, licenseType }: { onBuy: () => void, licenseType: s
 const Paywall = ({ onUnlock, onClose }: { onUnlock: (key: string) => boolean, onClose: () => void }) => {
   const [keyInput, setKeyInput] = useState('');
   const [error, setError] = useState('');
+  const [paywallTimer, setPaywallTimer] = useState(900); // 15 minutes
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+        setPaywallTimer((prev) => (prev > 0 ? prev - 1 : 900)); // Loop timer when it hits 0
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   const handleValidation = () => {
     if (onUnlock(keyInput)) onClose();
@@ -604,11 +622,18 @@ const Paywall = ({ onUnlock, onClose }: { onUnlock: (key: string) => boolean, on
             <X className="hidden md:block" size={24} />
             <span className="md:hidden font-bold text-sm">Voltar</span>
           </button>
+          
+          <div className="inline-flex items-center gap-2 bg-red-500/20 border border-red-500/50 rounded-full px-4 py-1.5 mb-4 animate-pulse">
+            <Clock size={16} className="text-red-400" />
+            <span className="text-red-400 font-bold font-mono text-lg">{formatTime(paywallTimer)}</span>
+            <span className="text-xs text-red-300 font-semibold uppercase tracking-wide ml-1">Para o fim da oferta</span>
+          </div>
+
           <Crown size={48} className="text-yellow-400 mx-auto mb-4 fill-yellow-400/20 animate-bounce" />
           <h2 className="text-2xl md:text-4xl font-bold text-white mb-2">Desbloqueie o Poder Total do <span className="text-brand-accent">ArbiBot</span></h2>
-          <p className="text-gray-400 text-sm md:text-lg">Aumente seus lucros com acesso ilimitado a todas as ferramentas.</p>
+          <p className="text-gray-400 text-sm md:text-lg">Aproveite <span className="text-yellow-400 font-bold">50% DE DESCONTO</span> em todos os planos.</p>
           <div className="mt-4 bg-green-500/20 border border-green-500/30 text-green-400 px-4 py-2 rounded-lg inline-flex items-center gap-2 font-bold animate-pulse text-xs md:text-sm">
-            <Zap size={16} fill="currentColor" /> 5% DE DESCONTO NO PIX - Fale no Suporte!
+            <Zap size={16} fill="currentColor" /> OFERTA POR TEMPO LIMITADO
           </div>
         </div>
         <div className="p-6 md:p-8">
@@ -617,8 +642,15 @@ const Paywall = ({ onUnlock, onClose }: { onUnlock: (key: string) => boolean, on
                <div key={plan.id} className={`relative bg-brand-900 rounded-xl p-6 border transition-transform hover:scale-105 ${plan.popular ? 'border-yellow-500 shadow-xl shadow-yellow-500/10 z-10 scale-105' : plan.highlight ? 'border-brand-accent shadow-lg shadow-brand-accent/10' : 'border-brand-700'}`}>
                  {plan.popular && <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-yellow-500 text-brand-900 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1"><Star size={10} fill="currentColor"/> MAIS VENDIDO</div>}
                  {plan.highlight && <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-brand-accent text-brand-900 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1"><Zap size={10} fill="currentColor"/> RECOMENDADO</div>}
+                 <div className="absolute top-2 right-2 bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">-50%</div>
                  <h3 className={`text-lg font-bold mb-2 ${plan.id === 'trial' ? 'text-brand-accent' : 'text-white'}`}>{plan.name}</h3>
-                 <div className="flex items-baseline gap-1 mb-4"><span className="text-sm text-gray-400">R$</span><span className="text-3xl font-bold text-white">{plan.price}</span></div>
+                 <div className="flex flex-col mb-4">
+                    <span className="text-xs text-gray-500 line-through">R$ {plan.originalPrice}</span>
+                    <div className="flex items-baseline gap-1">
+                        <span className="text-sm text-gray-400">R$</span>
+                        <span className="text-3xl font-bold text-white">{plan.price}</span>
+                    </div>
+                 </div>
                  <p className="text-brand-400 text-sm font-medium mb-6">{plan.duration}</p>
                  <ul className="space-y-3 mb-8">{plan.features.map((feat, i) => (<li key={i} className="flex items-center gap-2 text-xs text-gray-300"><CheckCircle2 size={14} className="text-brand-accent shrink-0"/> {feat}</li>))}</ul>
                  <a href={plan.link} target="_blank" rel="noopener noreferrer" className={`block w-full text-center py-3 rounded-lg font-bold transition-colors text-sm flex items-center justify-center gap-2 ${plan.popular ? 'bg-yellow-500 hover:bg-yellow-400 text-brand-900' : plan.highlight ? 'bg-brand-accent hover:bg-emerald-400 text-brand-900' : 'bg-brand-700 hover:bg-brand-600 text-white'}`}>{plan.id === 'trial' ? 'TESTAR AGORA' : 'COMPRAR'}</a>
